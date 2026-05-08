@@ -2,10 +2,10 @@
 include 'cors.php';
 include 'db_config.php';
 
-$host = "localhost";
-$db_name = "stlaf_db"; 
-$username = "root";
-$password = "";
+$host   = 'bchbyrvggka3okcjwmwv-mysql.services.clever-cloud.com';
+$dbname = 'bchbyrvggka3okcjwmwv';
+$dbuser = 'usdkgqrlhm5iiwtk';
+$dbpass = 'dKzvf9Ns0GxUH041q5Hd';
 
 try {
     $conn = new PDO("mysql:host=$host;dbname=$db_name", $username, $password);
