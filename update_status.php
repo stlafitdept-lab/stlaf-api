@@ -2,13 +2,15 @@
 include 'cors.php';
 include 'db_config.php';
 
-$host = "localhost";
-$db_name = "stlaf_db";
-$username = "root";
-$password = "";
+// Gamitin ang credentials mula sa iyong screenshot
+$host   = 'bchbyrvggka3okcjwmwv-mysql.services.clever-cloud.com';
+$dbname = 'bchbyrvggka3okcjwmwv';
+$dbuser = 'usdkgqrlhm5iiwtk';
+$dbpass = 'dKzvf9Ns0GxUH041q5Hd';
 
 try {
-    $conn = new PDO("mysql:host=$host;dbname=$db_name;charset=utf8mb4", $username, $password);
+    // FIX: Siniguro na tugma ang variable names ($dbname, $dbuser, $dbpass)
+    $conn = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $dbuser, $dbpass);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch(PDOException $e) {
     echo json_encode(["success" => false, "message" => "Connection error: " . $e->getMessage()]);
@@ -32,7 +34,6 @@ if ($id === '' || $status === '' || $type === '') {
     exit;
 }
 
-// Determine table
 $tableName = null;
 if ($type === 'leave' || $type === 'leaves') $tableName = 'leaves';
 if ($type === 'overtime' || $type === 'ot' || $type === 'overtimes') $tableName = 'overtimes';
@@ -42,10 +43,8 @@ if ($tableName === null) {
     exit;
 }
 
-// Normalize status values
-$normalizedStatus = ucfirst(strtolower($status)); // "Approved" / "Rejected" / "Pending"
+$normalizedStatus = ucfirst(strtolower($status));
 
-// ✅ Get rejection reason from many possible keys (frontend sends different names)
 $rejectionReason =
     trim((string)($data['rejection_reason'] ?? '')) ?:
     trim((string)($data['reject_reason'] ?? '')) ?:
@@ -54,15 +53,12 @@ $rejectionReason =
     trim((string)($data['rejectionReason'] ?? '')) ?:
     trim((string)($data['remarks'] ?? ''));
 
-// If rejected, require reason
 if (strtolower($normalizedStatus) === 'rejected' && $rejectionReason === '') {
     echo json_encode(["success" => false, "message" => "Rejection reason is required."]);
     exit;
 }
 
 try {
-    // ✅ If rejected: save rejection_reason
-    // ✅ If approved/pending: clear rejection_reason (so table stays clean)
     $reasonToSave = (strtolower($normalizedStatus) === 'rejected') ? $rejectionReason : null;
 
     $query = "UPDATE {$tableName}

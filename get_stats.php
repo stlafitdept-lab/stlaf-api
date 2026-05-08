@@ -8,7 +8,8 @@ $dbuser = 'usdkgqrlhm5iiwtk';
 $dbpass = 'dKzvf9Ns0GxUH041q5Hd';
 
 try {
-    $conn = new PDO("mysql:host=$host;dbname=$db_name", $username, $password);
+    // FIX: Siniguro na tugma ang variable names ($dbname, $dbuser, $dbpass)
+    $conn = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $dbuser, $dbpass);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch(PDOException $exception) {
     echo json_encode(["error" => "Connection error: " . $exception->getMessage()]);
@@ -32,7 +33,7 @@ if ($role === 'approver') {
     $stmt1->execute(['dept' => $dept]);
     $res1 = $stmt1->fetch(PDO::FETCH_ASSOC);
 
-    // 2. Total Processed (Approved + Rejected) - Using date_filed from your DB
+    // 2. Total Processed
     $stmt2 = $conn->prepare("
         SELECT 
             ((SELECT COUNT(*) FROM leaves WHERE department = :dept AND status IN ('Approved', 'Rejected') AND YEAR(date_filed) = :year) +
@@ -47,7 +48,6 @@ if ($role === 'approver') {
     ];
 
 } else if ($role === 'employee') {
-    // Total Requests Filed - Using employeeId (Capital I)
     $stmt1 = $conn->prepare("
         SELECT 
             ((SELECT COUNT(*) FROM leaves WHERE employeeId = :id AND YEAR(date_filed) = :year) +
@@ -56,7 +56,6 @@ if ($role === 'approver') {
     $stmt1->execute(['id' => $id, 'year' => $year]);
     $res1 = $stmt1->fetch(PDO::FETCH_ASSOC);
 
-    // Leave Credits logic remains the same
     $stmt2 = $conn->prepare("SELECT SUM(DATEDIFF(end_date, start_date) + 1) as used FROM leaves WHERE employeeId = :id AND status = 'Approved' AND YEAR(date_filed) = :year");
     $stmt2->execute(['id' => $id, 'year' => $year]);
     $res2 = $stmt2->fetch(PDO::FETCH_ASSOC);
