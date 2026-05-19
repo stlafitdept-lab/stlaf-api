@@ -165,12 +165,15 @@ if ($role === 'employee') {
 // supports many approvers in one department
 // ==========================================
 elseif ($role === 'approver') {
-    $loginDepartment = $department !== '' ? $department : $username;
+    $loginDepartment = trim($department !== '' ? $department : $username);
 
     $stmt = $pdo->prepare("
         SELECT * FROM users
         WHERE LOWER(TRIM(department)) = LOWER(TRIM(?))
-        AND LOWER(TRIM(role)) = 'approver'
+        AND (
+            LOWER(TRIM(role)) = 'approver'
+            OR LOWER(TRIM(role)) LIKE '%approver%'
+        )
     ");
     $stmt->execute([$loginDepartment]);
     $approvers = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -178,13 +181,11 @@ elseif ($role === 'approver') {
     if (!$approvers || count($approvers) === 0) {
         echo json_encode([
             'success' => false,
-            'message' => 'User not found.'
+            'message' => 'No approver found for department: ' . $loginDepartment
         ]);
         exit();
     }
 
-    // Hanapin kung sinong approver sa department na ito
-    // ang may tamang password
     foreach ($approvers as $approver) {
         if (verifyUserPassword($password, $approver['password'] ?? '')) {
             $user = $approver;
