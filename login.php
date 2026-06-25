@@ -14,15 +14,15 @@ $allowedOrigins = [
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-if (in_array($origin, $allowedOrigins)) {
+if (in_array($origin, $allowedOrigins, true)) {
     header("Access-Control-Allow-Origin: " . $origin);
+    header("Access-Control-Allow-Credentials: true");
 } else {
     header("Access-Control-Allow-Origin: *");
 }
 
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
-header("Access-Control-Allow-Credentials: true");
 header("Content-Type: application/json");
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -31,34 +31,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success' => false, 'message' => 'Method not allowed']);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Method not allowed'
+    ]);
     exit();
 }
 
-$input = file_get_contents('php://input');
-$data = json_decode(file_get_contents("php://input"), true);
+/**
+ * Password checker
+ * Supports hashed password and plain text password
+ */
+function verifyUserPassword($inputPassword, $storedPassword)
+{
+    if ($storedPassword === null || $storedPassword === '') {
+        return false;
+    }
 
-if (!$data) {
-    echo json_encode(['success' => false, 'message' => 'Invalid request body']);
+    $passwordInfo = password_get_info($storedPassword);
+
+    // Hashed password
+    if (!empty($passwordInfo['algo'])) {
+        return password_verify($inputPassword, $storedPassword);
+    }
+
+    // Plain text password
+    return hash_equals((string)$storedPassword, (string)$inputPassword);
+}
+
+$rawInput = file_get_contents('php://input');
+$data = json_decode($rawInput, true);
+
+if (!is_array($data)) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid request body'
+    ]);
     exit();
 }
 
-$username = $data['username'];
-$password = $data['password'] ?? '';
-$role = $data['role'];
+// Inputs
+$username   = trim($data['username'] ?? '');
+$department = trim($data['department'] ?? '');
+$password   = (string)($data['password'] ?? '');
+$role       = strtolower(trim($data['role'] ?? ''));
 
-if (!$username || !$password || !$role) {
-    echo json_encode(['success' => false, 'message' => 'All fields are required.']);
+// Basic validation
+if ($role === '' || $password === '') {
+    echo json_encode([
+        'success' => false,
+        'message' => 'All fields are required.'
+    ]);
     exit();
 }
 
+if ($role === 'approver') {
+    // Approver can send department directly,
+    // or frontend may still use "username" field for department dropdown
+    if ($department === '' && $username === '') {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Department is required.'
+        ]);
+        exit();
+    }
+} elseif (in_array($role, ['employee', 'superadmin'], true)) {
+    if ($username === '') {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Username is required.'
+        ]);
+        exit();
+    }
+} else {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid role selected.'
+    ]);
+    exit();
+}
+
+// DB Connection
 $host   = 'bchbyrvggka3okcjwmwv-mysql.services.clever-cloud.com';
 $dbname = 'bchbyrvggka3okcjwmwv';
 $dbuser = 'usdkgqrlhm5iiwtk';
 $dbpass = 'dKzvf9Ns0GxUH041q5Hd';
 
 try {
-    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $dbuser, $dbpass);
+    $pdo = new PDO(
+        "mysql:host=$host;dbname=$dbname;charset=utf8",
+        $dbuser,
+        $dbpass
+    );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     echo json_encode([
@@ -74,30 +138,74 @@ $user = null;
 // EMPLOYEE LOGIN
 // username = id_number
 // ==========================================
-if ($role === 'Employee') {
+if ($role === 'employee') {
     $stmt = $pdo->prepare("
         SELECT * FROM users
-        WHERE id_number = ?
-        AND LOWER(role) IN ('employee', 'requestor/employee', 'requestor')
+        WHERE TRIM(id_number) = TRIM(?)
+        AND LOWER(TRIM(role)) IN ('employee', 'requestor/employee', 'requestor')
         LIMIT 1
     ");
     $stmt->execute([$username]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$user) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'User not found.'
+        ]);
+        exit();
+    }
+
+    if (!verifyUserPassword($password, $user['password'] ?? '')) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid password.'
+        ]);
+        exit();
+    }
 }
 
 // ==========================================
 // APPROVER LOGIN
-// username = department
+// login = department + password
+// supports many approvers in one department
 // ==========================================
-elseif ($role === 'Approver') {
+elseif ($role === 'approver') {
+    $loginDepartment = trim($department !== '' ? $department : $username);
+
     $stmt = $pdo->prepare("
         SELECT * FROM users
-        WHERE department = ?
-        AND LOWER(role) = 'approver'
-        LIMIT 1
+        WHERE LOWER(TRIM(department)) = LOWER(TRIM(?))
+        AND (
+            LOWER(TRIM(role)) = 'approver'
+            OR LOWER(TRIM(role)) LIKE '%approver%'
+        )
     ");
-    $stmt->execute([$username]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->execute([$loginDepartment]);
+    $approvers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!$approvers || count($approvers) === 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'No approver found for department: ' . $loginDepartment
+        ]);
+        exit();
+    }
+
+    foreach ($approvers as $approver) {
+        if (verifyUserPassword($password, $approver['password'] ?? '')) {
+            $user = $approver;
+            break;
+        }
+    }
+
+    if (!$user) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid password.'
+        ]);
+        exit();
+    }
 }
 
 // ==========================================
@@ -107,18 +215,12 @@ elseif ($role === 'Approver') {
 elseif ($role === 'superadmin') {
     $stmt = $pdo->prepare("
         SELECT * FROM users
-        WHERE username = ?
-        AND LOWER(role) = 'superadmin'
+        WHERE TRIM(username) = TRIM(?)
+        AND LOWER(TRIM(role)) = 'superadmin'
         LIMIT 1
     ");
     $stmt->execute([$username]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
-}
-
-else {
-    echo json_encode(['success' => false, 'message' => 'Invalid role selected.']);
-    exit();
-}
 
     if (!$user) {
         echo json_encode([
@@ -147,12 +249,12 @@ if ($dbPassword !== '') {
 }
 
 if (!$isPasswordValid) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'Invalid password.'
-        ]);
-        exit();
-    }
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid password.'
+    ]);
+    exit();
+}
 
 // ==========================================
 // SUCCESS RESPONSE
@@ -162,6 +264,7 @@ echo json_encode([
     'message' => 'Login successful.',
     'user' => [
         'id_number'  => $user['id_number'] ?? '',
+        'username'   => $user['username'] ?? '',
         'name'       => $user['name'] ?? '',
         'role'       => $user['role'] ?? '',
         'department' => $user['department'] ?? '',
